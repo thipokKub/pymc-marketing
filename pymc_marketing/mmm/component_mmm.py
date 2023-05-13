@@ -5,3 +5,4 @@
 #   - Privitive (evenly split -> constran prior to Laplace)
 #   - Use third-party libaray (probably going to use `https://github.com/deepcharles/ruptures/`)
 # - Remove "dim" in favour of multiple observation to direct calibration from lift test
+# - Handle media transformation through `transform` component

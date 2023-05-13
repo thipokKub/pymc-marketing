@@ -9,9 +9,12 @@ from pymc_marketing.mmm.components.utils import Spline
 # [x] - Add Linear: a*t + b
 # [ ] - Add Logarithmic: a*log(1 + t) + b
 # [ ] - Add Power: a*t^k + b
-# [ ] - Add Exponential
-# [x] - Add Logistic
+# [ ] - Add Exponential: a*exp(k*t) + b
+# [ ] - Add Polynomial: a_0 + a_1 * t + a_2 * t^2 + ... + a_n * t^n
+# [x] - Add Logistic: L/(1 + exp(-k*(x - c))) + b
 # [x] - Add Spline/Piecewise
+# [?] - Need to define prediction behaviour
+#       Want to include damped trend, but not sure how to train that
 
 class TrendComponent(ComponentBase):
     def __init__(self, name, t):
