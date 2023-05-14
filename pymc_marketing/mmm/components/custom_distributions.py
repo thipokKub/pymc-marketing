@@ -22,6 +22,10 @@ from pymc.distributions.continuous import PositiveContinuous, Continuous
 #       Need to write custom rv_continuous, not sure how
 # [?] - *BiTApprox: Depend on BiNormal - SkewT doesn't have close form, but it can be approximated by pm.Mixture interpolation
 #       Need to write custom rv_continuous, not sure how
+# [x] - Symmetric Generalized Normal Distribution
+#       https://en.wikipedia.org/wiki/Generalized_normal_distribution
+# [-] - *Asymmetric Generalized Normal Distribution
+#       Need to write custom rv_continuous 
 
 # Implement FoldedNormal Distribution
 class FoldedNormalRV(RandomVariable):
@@ -53,7 +57,7 @@ class FoldedNormal(PositiveContinuous):
     rv_op = folded_normal
     
     @classmethod
-    def dist(cls, mu=0, sigma=None, *args, **kwargs):
+    def dist(cls, mu=0.0, sigma=1.0, *args, **kwargs):
         mu = pt.as_tensor_variable(floatX(mu))
         sigma = pt.as_tensor_variable(floatX(sigma))
         return super().dist([mu, sigma], *args, **kwargs)
@@ -99,7 +103,7 @@ class FoldedNormal(PositiveContinuous):
             msg="mu >= 0, sigma > 0",
         )
     
-# Implement Bi-Cauchy
+# Implement Bi-Cauchy Distribution
 class BiCauchyRV(RandomVariable):
     name = "bi_cauchy"
     ndim_supp = 0
@@ -163,7 +167,7 @@ class BiCauchy(Continuous):
             res,
             sigma > 0,
             pt.abs(alpha) < 1,
-            msg="mu >= 0, -1 < alpha < 1",
+            msg="sigma > 0, -1 < alpha < 1",
         )
     
     def logcdf(value, mu, sigma, alpha):
@@ -178,7 +182,87 @@ class BiCauchy(Continuous):
             res,
             sigma > 0,
             pt.abs(alpha) < 1,
-            msg="mu >= 0, -1 < alpha < 1",
+            msg="sigma > 0, -1 < alpha < 1",
         )
 
+# Implement Generalized Normal Distribution
+class GenNormalRV(RandomVariable):
+    name = "genalized_normal"
+    ndim_supp = 0
+    ndims_params = [0, 0, 0]
+    dtype = "floatX"
+    _print_name = ("GenNormal", "\\operatorname{GenNormal}")
+    
+    @classmethod
+    def rng_fn(
+        cls,
+        rng: np.random.RandomState,
+        mu: Union[np.ndarray, float],
+        sigma: Union[np.ndarray, float],
+        beta: Union[np.ndarray, float],
+        size: Optional[Union[List[int], int]],
+    ) -> np.ndarray:
+        return stats.gennorm.rvs(
+            beta=beta,
+            loc=mu,
+            scale=sigma,
+            size=size,
+            random_state=rng,
+        )
+    
+gennorm = GenNormalRV()
 
+class GenNormal(Continuous):
+    """
+    See https://en.wikipedia.org/wiki/Generalized_normal_distribution#Version_1
+    
+    ========  ========================
+    Support   :math:`x \in \mathbb{R}`
+    Mode      :math:`\mu`
+    Mean      :math:`\mu`
+    Variance  :math:`\mu`
+    ========  ========================
+    """
+    
+    rv_op = gennorm
+    
+    @classmethod
+    def dist(cls, mu=0.0, sigma=1.0, beta=1.0, *args, **kwargs):
+        beta = pt.as_tensor_variable(floatX(beta))
+        mu = pt.as_tensor_variable(floatX(mu))
+        sigma = pt.as_tensor_variable(floatX(sigma))
+        return super().dist([mu, sigma, beta], *args, **kwargs)
+    
+    def moment(rv, size, mu, sigma, alpha):
+        mu, _, _ = pt.broadcast_arrays(mu, sigma, alpha)
+        if not rv_size_is_none(size):
+            mu = pt.full(size, mu)
+        return mu
+    
+    def logp(value, mu, sigma, beta):
+        # np.log(0.5*beta) - sc.gammaln(1.0/beta) - abs(x)**beta
+        res = (
+            pt.log(0.5 * beta)
+            - pt.gammaln(1.0/beta)
+            - pt.abs((value - mu)/sigma)**beta
+            - pt.log(sigma)
+        )
+        return check_parameters(
+            res,
+            sigma > 0,
+            beta > 0,
+            msg="sigma > 0, beta > 0"
+        )
+    
+    def logcdf(value, mu, sigma, beta):
+        c = 0.5 * pt.sign(x)
+        res = pt.log(
+            (0.5 + c)
+            - c * pt.gammaincc(1.0/beta, pt.abs((value - mu)/sigma)**beta)
+        )
+        return check_parameters(
+            res,
+            sigma > 0,
+            beta > 0,
+            msg="sigma > 0, beta > 0"
+        )
