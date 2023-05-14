@@ -7,6 +7,7 @@ from pymc.pytensorf import floatX
 from typing import List, Optional, Union
 from pytensor.tensor.random.op import RandomVariable
 from pymc.distributions.dist_math import check_parameters
+from pymc.distributions.shape_utils import rv_size_is_none
 from pymc.distributions.continuous import PositiveContinuous
 
 # Implement FoldedNormal Distribution
