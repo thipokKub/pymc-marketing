@@ -6,3 +6,4 @@ import pymc_marketing.mmm.components.seasonal as seasonal
 import pymc_marketing.mmm.components.trend as trend
 import pymc_marketing.mmm.components.transform as transform
 import pymc_marketing.mmm.components.utils as utils
+import pymc_marketing.mmm.components.custom_distributions as distributions
