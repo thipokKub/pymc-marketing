@@ -8,7 +8,20 @@ from typing import List, Optional, Union
 from pytensor.tensor.random.op import RandomVariable
 from pymc.distributions.dist_math import check_parameters
 from pymc.distributions.shape_utils import rv_size_is_none
-from pymc.distributions.continuous import PositiveContinuous
+from pymc.distributions.continuous import PositiveContinuous, Continuous
+
+# TODO:
+# [x] - FoldedNormal Distribution
+# [o] - FoldedCauchy Distribution: Need to de-cipher `c` constant first
+#       (see https://docs.scipy.org/doc/scipy/tutorial/stats/continuous_foldcauchy.html)
+# [o] - *FoldedStudentT Distribution: Maybe? https://en.wikipedia.org/wiki/Folded-t_and_half-t_distributions
+#       Need to write custom rv_continuous. But based on foldcauchy, this should be doable
+#       https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.foldcauchy.html#scipy.stats.foldcauchy
+# [x] - BiCauchy, or SkewCauchy
+# [?] - *BiNormal, or SkewNormal: Need to find cdf formula first
+#       Need to write custom rv_continuous, not sure how
+# [?] - *BiTApprox: Depend on BiNormal - SkewT doesn't have close form, but it can be approximated by pm.Mixture interpolation
+#       Need to write custom rv_continuous, not sure how
 
 # Implement FoldedNormal Distribution
 class FoldedNormalRV(RandomVariable):
@@ -46,7 +59,10 @@ class FoldedNormal(PositiveContinuous):
         return super().dist([mu, sigma], *args, **kwargs)
     
     def moment(rv, size, mu, sigma):
-        mean = ((2/np.pi)**0.5) * sigma * pt.exp(-(mu**2)/(2*(sigma**2))) - mu * pt.erf(-mu/(sigma * (2**0.5)))
+        mean = (
+            ((2/np.pi)**0.5) * sigma * pt.exp(-(mu**2)/(2*(sigma**2)))
+            - mu * pt.erf(-mu/(sigma * (2**0.5)))
+        )
         if not rv_size_is_none(size):
             mean = pt.full(size, mean)
         return mean
@@ -83,3 +99,86 @@ class FoldedNormal(PositiveContinuous):
             msg="mu >= 0, sigma > 0",
         )
     
+# Implement Bi-Cauchy
+class BiCauchyRV(RandomVariable):
+    name = "bi_cauchy"
+    ndim_supp = 0
+    ndims_params = [0, 0, 0]
+    dtype = "floatX"
+    _print_name = ("BiCauchy", "\\operatorname{BiCauchy}")
+    
+    @classmethod
+    def rng_fn(
+        cls,
+        rng: np.random.RandomState,
+        mu: Union[np.ndarray, float],
+        sigma: Union[np.ndarray, float],
+        alpha: Union[np.ndarray, float],
+        size: Optional[Union[List[int], int]],
+    ) -> np.ndarray:
+        return stats.skewcauchy.rvs(
+            a=alpha,
+            loc=mu,
+            scale=sigma,
+            size=size,
+            random_state=rng,
+        )
+
+bicauchy = BiCauchyRV()
+class BiCauchy(Continuous):
+    """
+    Renamed to BiCauchy, to support the same family as BiGaussian
+    See https://en.wikipedia.org/wiki/Skewed_generalized_t_distribution#Skewed_Cauchy_distribution
+    
+    ========  ========================
+    Support   :math:`x \in \mathbb{R}`
+    Mode      :math:`\mu`
+    Mean      undefined
+    Variance  undefined
+    ========  ========================
+    """
+    
+    rv_op = bicauchy
+    
+    @classmethod
+    def dist(cls, mu=0.0, sigma=1.0, alpha=0.0, *args, **kwargs):
+        alpha = pt.as_tensor_variable(floatX(alpha))
+        mu = pt.as_tensor_variable(floatX(mu))
+        sigma = pt.as_tensor_variable(floatX(sigma))
+        return super().dist([mu, sigma, alpha], *args, **kwargs)
+    
+    def moment(rv, size, mu, sigma, alpha):
+        mu, _, _ = pt.broadcast_arrays(mu, sigma, alpha)
+        if not rv_size_is_none(size):
+            mu = pt.full(size, mu)
+        return mu
+    
+    def logp(value, mu, sigma, alpha):
+        res = -1 * (
+            pt.log(sigma)
+            + pt.log(np.pi)
+            + pt.log(1 + (value - mu)**2 / (sigma**2 * (1 + alpha * pt.sign(value - mu))**2) )
+        )
+        return check_parameters(
+            res,
+            sigma > 0,
+            pt.abs(alpha) < 1,
+            msg="mu >= 0, -1 < alpha < 1",
+        )
+    
+    def logcdf(value, mu, sigma, alpha):
+        res = pt.log(
+            pt.switch(
+                pt.le(value, 0),
+                (1 - alpha)/2 + ((1 - alpha)/np.pi) * pt.arctan((value - mu)/(sigma * (1 - alpha))),
+                (1 - alpha)/2 + ((1 + alpha)/np.pi) * pt.arctan((value - mu)/(sigma * (1 + alpha)))
+            )
+        )
+        return check_parameters(
+            res,
+            sigma > 0,
+            pt.abs(alpha) < 1,
+            msg="mu >= 0, -1 < alpha < 1",
+        )
+
+
