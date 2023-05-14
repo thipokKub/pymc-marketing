@@ -12,10 +12,10 @@ from pymc.distributions.continuous import PositiveContinuous, Continuous
 
 # TODO:
 # [x] - FoldedNormal Distribution
-# [o] - FoldedCauchy Distribution: Need to de-cipher `c` constant first
+# [x] - FoldedCauchy Distribution: Need to de-cipher `c` constant first
 #       (see https://docs.scipy.org/doc/scipy/tutorial/stats/continuous_foldcauchy.html)
 # [o] - *FoldedStudentT Distribution: Maybe? https://en.wikipedia.org/wiki/Folded-t_and_half-t_distributions
-#       Need to write custom rv_continuous. But based on foldcauchy, this should be doable
+#       Need to write custom rv_continuous. But based on `stats.foldcauchy``, this should be doable
 #       https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.foldcauchy.html#scipy.stats.foldcauchy
 # [x] - BiCauchy, or SkewCauchy
 # [?] - *BiNormal, or SkewNormal: Need to find cdf formula first
@@ -96,6 +96,84 @@ class FoldedNormal(PositiveContinuous):
             ) - pt.log(2)
         )
         
+        return check_parameters(
+            res,
+            sigma > 0,
+            mu >= 0,
+            msg="mu >= 0, sigma > 0",
+        )
+    
+# Implement Folded-Cauchy Distribution
+class FoldedCauchy(RandomVariable):
+    name = "folded_cauchy"
+    ndim_supp = 0
+    ndims_params = [0, 0]
+    dtype = "floatX"
+    _print_name = ("FoldedCauchy", "\\operatorname{FoldedCauchy}")
+    
+    @classmethod
+    def rng_fn(
+        cls,
+        rng: np.random.RandomState,
+        mu: Union[np.ndarray, float],
+        sigma: Union[np.ndarray, float],
+        size: Optional[Union[List[int], int]],
+    ) -> np.ndarray:
+        return stats.foldcauchy.rvs(
+            c=mu/sigma,
+            loc=0,
+            scale=sigma,
+            size=size,
+            random_state=rng,
+        )
+    
+foldedCauchy = FoldedCauchy()
+
+class FoldedCauchy(PositiveContinuous):
+    rv_op = foldedCauchy
+    
+    @classmethod
+    def dist(cls, mu=0.0, sigma=1.0, *args, **kwargs):
+        mu = pt.as_tensor_variable(floatX(mu))
+        sigma = pt.as_tensor_variable(floatX(sigma))
+        return super().dist([mu, sigma], *args, **kwargs)
+    
+    def moment(rv, size, mu, sigma):
+        mu, _ = pt.broadcast_arrays(mu, sigma)
+        if not rv_size_is_none(size):
+            mu = pt.full(size, mu)
+        return mu
+    
+    def logp(value, mu, sigma):
+        c = mu/sigma
+        res = (
+            pt.log(
+                (1.0/np.pi) * 1.0/(1 + (value/sigma - c)**2) +
+                (1.0/np.pi) * 1.0/(1 + (value/sigma + c)**2)
+            )
+            - pt.log(sigma)
+        )
+        res = pt.switch(pt.gt(value/sigma, 0), res, -np.inf)
+        return check_parameters(
+            res,
+            sigma > 0,
+            mu >= 0,
+            msg="mu >= 0, sigma > 0",
+        )
+    
+    def logcdf(value, mu, sigma):
+        c = mu/sigma
+        res = pt.switch(
+            pt.le(value/sigma, 0),
+            -np.inf,
+            (
+                -1 * pt.log(np.pi)
+                + pt.log(
+                    pt.arctan(value/sigma - c)
+                    + pt.arctan(value/sigma + c)
+                )
+            )
+        )
         return check_parameters(
             res,
             sigma > 0,
@@ -240,7 +318,6 @@ class GenNormal(Continuous):
         return mu
     
     def logp(value, mu, sigma, beta):
-        # np.log(0.5*beta) - sc.gammaln(1.0/beta) - abs(x)**beta
         res = (
             pt.log(0.5 * beta)
             - pt.gammaln(1.0/beta)
@@ -255,7 +332,7 @@ class GenNormal(Continuous):
         )
     
     def logcdf(value, mu, sigma, beta):
-        c = 0.5 * pt.sign(x)
+        c = 0.5 * pt.sign(value)
         res = pt.log(
             (0.5 + c)
             - c * pt.gammaincc(1.0/beta, pt.abs((value - mu)/sigma)**beta)
