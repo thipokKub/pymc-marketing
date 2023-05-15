@@ -12,6 +12,7 @@ from pymc_marketing.mmm.components.custom_distributions import FoldedNormal
 # [x] - Truncated Normal (Zero truncated) - Always >= 0
 # [x] - Truncated Student-t (Zero truncated) - Always >= 0
 # [x] - Folded Normal - Always >= 0
+# [?] - *BiTApprox: Depend on BiNormal - SkewT doesn't have close form, but it can be approximated by pm.Mixture interpolation
 class LikelihoodComponent(ComponentBase):
     def __init__(self, name, t):
         super().__init__(name)

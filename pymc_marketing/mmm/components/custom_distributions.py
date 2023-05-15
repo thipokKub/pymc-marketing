@@ -3,6 +3,7 @@
 import pymc as pm
 import numpy as np
 from scipy import stats
+import scipy.special as sc
 import pytensor.tensor as pt
 from pymc.pytensorf import floatX
 from typing import List, Optional, Union
@@ -14,19 +15,12 @@ from pymc.distributions.continuous import PositiveContinuous, Continuous
 
 # TODO:
 # [x] - FoldedNormal Distribution
-# [x] - FoldedCauchy Distribution: Need to de-cipher `c` constant first
-#       (see https://docs.scipy.org/doc/scipy/tutorial/stats/continuous_foldcauchy.html)
-# [x] - *FoldedStudentT Distribution: Maybe? https://en.wikipedia.org/wiki/Folded-t_and_half-t_distributions
-#       Need to write custom rv_continuous. But based on `stats.foldcauchy``, this should be doable
-#       https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.foldcauchy.html#scipy.stats.foldcauchy
+# [x] - FoldedCauchy Distribution
+# [x] - FoldedStudentT Distribution
 # [x] - BiCauchy, or SkewCauchy
-# [?] - *BiNormal, or SkewNormal: Need to find cdf formula first
-#       Need to write custom rv_continuous, not sure how
-# [?] - *BiTApprox: Depend on BiNormal - SkewT doesn't have close form, but it can be approximated by pm.Mixture interpolation
-#       Need to write custom rv_continuous, not sure how
+# [?] - *BiNormal, or SkewNormal: Need to find cdf formula first. Need to define rvs sampling
 # [x] - Symmetric Generalized Normal Distribution
-#       https://en.wikipedia.org/wiki/Generalized_normal_distribution
-# [-] - *Asymmetric Generalized Normal Distribution
+# [x] - Asymmetric Generalized Normal Distribution
 #       Need to write custom rv_continuous 
 
 # Implement FoldedNormal Distribution
@@ -206,7 +200,7 @@ class foldt_gen(rv_continuous):
     def _stats(self, c, df):
         return np.inf, np.inf, np.nan, np.nan
     
-fold_t = t = foldt_gen(name='fold_t')
+fold_t = foldt_gen(name='fold_t')
 
 class FoldedStudentTRV(RandomVariable):
     name = "FoldedStudentT"
@@ -446,4 +440,100 @@ class GenNormal(Continuous):
             sigma > 0,
             beta > 0,
             msg="sigma > 0, beta > 0"
+        )
+
+# Implement Asymmetric Generalized Normal Distribution
+class AsymmetricGenNormalRV(RandomVariable):
+    name = "asymmetric_genalized_normal"
+    ndim_supp = 0
+    ndims_params = [0, 0, 0]
+    dtype = "floatX"
+    _print_name = ("AsymmetricGenNormal", "\\operatorname{AsymmetricGenNormal}")
+    
+    @classmethod
+    def rng_fn(
+        cls,
+        rng: np.random.RandomState,
+        mu: Union[np.ndarray, float],
+        sigma: Union[np.ndarray, float],
+        kappa: Union[np.ndarray, float],
+        size: Optional[Union[List[int], int]],
+    ) -> np.ndarray:
+        u = rng.uniform(size=size)
+        std_norm_icdf = lambda x: np.sqrt(2) * sc.erfinv(2*x - 1)
+        if kappa == 0:
+            return sigma * std_norm_icdf(u) + mu
+        return (sigma / kappa) * (1 - np.exp(-1 * kappa * std_norm_icdf(u))) + mu
+
+asymgennorm = AsymmetricGenNormalRV()
+
+class AsymmetricGenNormal(Continuous):
+    """
+    See https://en.wikipedia.org/wiki/Generalized_normal_distribution#Version_2
+    
+    ========  ========================
+    Support   :math:`x \in \mathbb{R}`
+    Mean      :math:`\mu - \frac{\sigma}{\kappa} \big{\[} \exp \{\frac{\kappa^2}{2} \} - 1\big{\]}`
+    Median    :math:`\mu`
+    Variance  :math:`\frac{\sigma^2}{\kappa^2} \exp \{\kappa^2\} \exp \{\kappa^2\ - 1\}`
+    ========  ========================
+    """
+    
+    rv_op = asymgennorm
+    
+    @classmethod
+    def dist(cls, mu=0.0, sigma=1.0, kappa=0.0, *args, **kwargs):
+        kappa = pt.as_tensor_variable(floatX(kappa))
+        mu = pt.as_tensor_variable(floatX(mu))
+        sigma = pt.as_tensor_variable(floatX(sigma))
+        return super().dist([mu, sigma, kappa], *args, **kwargs)
+    
+    def moment(rv, size, mu, sigma, kappa):
+        mu, sigma, kappa = pt.broadcast_arrays(mu, sigma, kappa)
+        mean = mu - (sigma/kappa) * (pt.exp(kappa*kappa/2) - 1)
+        if not rv_size_is_none(size):
+            mean = pt.full(size, mean)
+        return mean
+    
+    def logp(value, mu, sigma, kappa):
+        inner = pt.where(
+            pt.eq(kappa, 0),
+            (value - mu)/sigma,
+            -1/pt.where(pt.eq(kappa, 0), 1, kappa) * pt.log(
+                1 - kappa * (value - mu)/sigma
+            )
+        )
+        support_lo = pt.where(pt.lt(kappa, 0), mu + sigma/kappa, -np.inf)
+        support_hi = pt.where(pt.gt(kappa, 0), mu + sigma/kappa, np.inf)
+        
+        res = (
+            pm.logp(pm.Normal.dist(mu=0, sigma=1), inner)
+            - pt.log(sigma - kappa * (value - mu))
+        )
+        res = pt.where(pt.ge(value, support_lo), res, -np.inf)
+        res = pt.where(pt.le(value, support_hi), res, -np.inf)
+        return check_parameters(
+            res,
+            sigma > 0,
+            msg="sigma > 0"
+        )
+    
+    def logcdf(value, mu, sigma, kappa):
+        inner = pt.where(
+            pt.eq(kappa, 0),
+            (value - mu)/sigma,
+            -1/pt.where(pt.eq(kappa, 0), 1, kappa) * pt.log(
+                1 - kappa * (value - mu)/sigma
+            )
+        )
+        support_lo = pt.where(pt.lt(kappa, 0), mu + sigma/kappa, -np.inf)
+        support_hi = pt.where(pt.gt(kappa, 0), mu + sigma/kappa, np.inf)
+        
+        res = pm.logcdf(pm.Normal.dist(mu=0, sigma=1), inner)
+        res = pt.where(pt.ge(value, support_lo), res, -np.inf)
+        res = pt.where(pt.le(value, support_hi), res, 0)
+        return check_parameters(
+            res,
+            sigma > 0,
+            msg="sigma > 0"
         )
