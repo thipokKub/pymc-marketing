@@ -1,5 +1,6 @@
 # Implement Non-Official Distributions in PyMC
 
+import pymc as pm
 import numpy as np
 from scipy import stats
 import pytensor.tensor as pt
@@ -8,13 +9,14 @@ from typing import List, Optional, Union
 from pytensor.tensor.random.op import RandomVariable
 from pymc.distributions.dist_math import check_parameters
 from pymc.distributions.shape_utils import rv_size_is_none
+from scipy.stats._distn_infrastructure import rv_continuous, _ShapeInfo
 from pymc.distributions.continuous import PositiveContinuous, Continuous
 
 # TODO:
 # [x] - FoldedNormal Distribution
 # [x] - FoldedCauchy Distribution: Need to de-cipher `c` constant first
 #       (see https://docs.scipy.org/doc/scipy/tutorial/stats/continuous_foldcauchy.html)
-# [o] - *FoldedStudentT Distribution: Maybe? https://en.wikipedia.org/wiki/Folded-t_and_half-t_distributions
+# [x] - *FoldedStudentT Distribution: Maybe? https://en.wikipedia.org/wiki/Folded-t_and_half-t_distributions
 #       Need to write custom rv_continuous. But based on `stats.foldcauchy``, this should be doable
 #       https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.foldcauchy.html#scipy.stats.foldcauchy
 # [x] - BiCauchy, or SkewCauchy
@@ -181,6 +183,108 @@ class FoldedCauchy(PositiveContinuous):
             msg="mu >= 0, sigma > 0",
         )
     
+# Implement Folded-StudentT
+class foldt_gen(rv_continuous):
+    def _argcheck(self, c, df):
+        return c >= 0 and df > 0
+
+    def _shape_info(self):
+        return [
+            _ShapeInfo("c", False, (0, np.inf), (True, False)),
+            _ShapeInfo("df", False, (0, np.inf), (False, False))
+        ]
+
+    def _rvs(self, c, df, size=1, random_state=None):
+        return abs(stats.t.rvs(df, loc=c, size=size, random_state=random_state))
+    
+    def _pdf(self, x, c, df):
+        return np.where(x >=0, stats.t.pdf(x, df, loc=c) + stats.t.pdf(x, df, loc=-c), 0)
+
+    def _cdf(self, x, c, df):
+        return np.where(x <= 0, 0, stats.t.cdf(x, df, loc=c) + stats.t.cdf(x, df, loc=-c))
+
+    def _stats(self, c, df):
+        return np.inf, np.inf, np.nan, np.nan
+    
+fold_t = t = foldt_gen(name='fold_t')
+
+class FoldedStudentTRV(RandomVariable):
+    name = "FoldedStudentT"
+    ndim_supp = 0
+    ndims_params = [0, 0, 0]
+    dtype = "floatX"
+    _print_name = ("FoldedStudentT", "\\operatorname{FoldedStudentT}")
+    
+    @classmethod
+    def rng_fn(
+        cls,
+        rng: np.random.RandomState,
+        nu: Union[np.ndarray, float],
+        mu: Union[np.ndarray, float],
+        sigma: Union[np.ndarray, float],
+        size: Optional[Union[List[int], int]],
+    ) -> np.ndarray:
+        return fold_t.rvs(
+            c=mu/sigma,
+            df=nu,
+            loc=0,
+            scale=sigma,
+            size=size,
+            random_state=rng,
+        )
+    
+foldedStudentT = FoldedStudentTRV()
+
+class FoldedStudentT(PositiveContinuous):
+    rv_op = foldedStudentT
+    
+    @classmethod
+    def dist(cls, nu=1.0, mu=0.0, sigma=1.0, *args, **kwargs):
+        nu = pt.as_tensor_variable(floatX(nu))
+        mu = pt.as_tensor_variable(floatX(mu))
+        sigma = pt.as_tensor_variable(floatX(sigma))
+        return super().dist([nu, mu, sigma], *args, **kwargs)
+    
+    def moment(rv, size, nu, mu, sigma):
+        _, mu, sigma = pt.broadcast_arrays(nu, mu, sigma)
+        mode = mu/sigma
+        if not rv_size_is_none(size):
+            mode = pt.full(size, mode)
+        return mode
+    
+    def logp(value, nu, mu, sigma):
+        c = mu/sigma
+        res = (
+            pt.log(
+                pt.exp(pm.StudentT.logp(value/sigma, nu, c, 1)) +
+                pt.exp(pm.StudentT.logp(value/sigma, nu, -c, 1))
+            )
+            - pt.log(sigma)
+        )
+        res = pt.switch(pt.gt(value/sigma, 0), res, -np.inf)
+        return check_parameters(
+            res,
+            nu > 0,
+            mu >= 0,
+            sigma > 0,
+            msg="nu > 0, mu >= 0, sigma > 0",
+        )
+    
+    def logcdf(value, nu, mu, sigma):
+        c = mu/sigma
+        res = pt.log(
+            pt.exp(pm.StudentT.logcdf(value/sigma, nu, c, 1)) +
+            pt.exp(pm.StudentT.logcdf(value/sigma, nu, -c, 1))
+        )
+        pt.switch(pt.le(value/sigma, 0), res)
+        return check_parameters(
+            res,
+            nu > 0,
+            mu >= 0,
+            sigma > 0,
+            msg="nu > 0, mu >= 0, sigma > 0",
+        )
+
 # Implement Bi-Cauchy Distribution
 class BiCauchyRV(RandomVariable):
     name = "bi_cauchy"
