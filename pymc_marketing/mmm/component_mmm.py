@@ -5,7 +5,7 @@
 # - Deal with Spline changepoint detection
 #   - Privitive (evenly split -> constran prior to Laplace)
 #   - Use third-party libaray (probably going to use `https://github.com/deepcharles/ruptures/`)
-# - Remove "dim" in favour of multiple observation to direct calibration from lift test
+# - Make `dim` optional
 # - Handle media transformation through `transform` component
-# - For Trend, and Seasonal: Make sure to decouple `t`, and `dates` (no duplicates)
-#   The duplication happen after via indexing, before feeding into `Likelihood`
+# - For multi observation modeling - Only some of the methods seems to work
+#   So I think I would make an example of it but as a separate custom model

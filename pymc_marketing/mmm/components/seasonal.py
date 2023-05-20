@@ -29,12 +29,26 @@ class SplineSeasonality(SeasonalityComponent):
     ):
         super().__init__(self._name, fourier_features)
         if type(checkpoints) is int:
-            checkpoints = np.linspace(t.min(), t.max(), checkpoints + 2)[1:-1]
-        spline_kernel = Spline.get_spline(t, checkpoints, spline, **kwargs)
-        size = fourier_features.shape[1]
+            self._checkpoints = np.linspace(t.min(), t.max(), checkpoints + 2)[1:-1]
+        spline_kernel = Spline.get_spline(t, self._checkpoint, spline, **kwargs)
+        if getattr(kwargs, "dim", None) is not None:
+            dim_kwargs = {"dim": [
+                *self._optional_coords().keys(),
+                getattr(kwargs, "dim", None)
+            ]}
+        else:
+            dim_kwargs = {"shape": (len(self._checkpoint), fourier_features.shape[1],)}
         
         self._sigma = pm.HalfNormal("sigma", sigma=1)
-        self._anchors = pt.cumsum(pm.Laplace("anchors", mu=0, b=self._sigma, shape=(len(checkpoints), size)), axis=0)
+        self._anchors = pt.cumsum(pm.Laplace("anchors", mu=0, b=self._sigma, **dim_kwargs), axis=0)
         self._seasonality = pm.Deterministic(
             "seasonality", var=(self._fourier_features * pm.math.dot(spline_kernel, self._anchors)).sum(axis=1)
         )
+
+    def _optional_coords(self):
+        return ({
+            **super()._optional_coords(),
+            **{
+                f"{self._name}.spline": np.arange(len(self._checkpoints))
+            }
+        })

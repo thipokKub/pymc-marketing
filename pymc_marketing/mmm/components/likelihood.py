@@ -3,7 +3,7 @@ import numpy as np
 import pytensor.tensor as pt
 
 from pymc_marketing.mmm.components.base import ComponentBase
-from pymc_marketing.mmm.components.custom_distributions import FoldedNormal
+from pymc_marketing.mmm.components.custom_distributions import FoldedNormal, FoldedStudentT
 
 # To change output node likelihood
 # - Off load `mu` calculation to the main model. In case of additional output (multi-outputs)
@@ -68,6 +68,9 @@ class TruncatedNormalLikelihood(LikelihoodComponent):
             upper=upper
         )
 
+# Did not work
+# ValueError: Betainc gradient with respect to a and b not supported.
+# See https://github.com/google/jax/issues/15487
 class TruncatedStudentTLikelihood(LikelihoodComponent):
     _name = "Likelihood.TruncatedStudentT"
     def __init__(
@@ -104,6 +107,26 @@ class FoldedNormalLikelihood(LikelihoodComponent):
         self._mu = pm.Deterministic("mu", var=pt.abs(x)) # Ensure positive
         self._likelihood = FoldedNormal(
             "likelihood",
+            mu=self._mu,
+            sigma=self._sigma,
+            observed=observed
+        )
+
+class FoldedStudentTLikelihood(LikelihoodComponent):
+    _name = "Likelihood.FoldedStudentT"
+    def __init__(
+        self, x, observed, **kwargs
+    ):
+        name = getattr(kwargs, "name", "")
+        super().__init__(f"{self._name}_{name}" if len(name) > 0 else self._name)
+
+        nu = pm.Gamma("nu", alpha=25, beta=2)
+        self._dof = pm.Deterministic("dof", var=(nu + 1))
+        self._mu = pm.Deterministic("mu", var=x)
+        self._sigma = pm.HalfNormal("sigma", sigma=1)
+        self._likelihood = FoldedStudentT(
+            "likelihood",
+            nu=self._dof,
             mu=self._mu,
             sigma=self._sigma,
             observed=observed

@@ -16,7 +16,7 @@ from pymc_marketing.mmm.components.utils import Spline
 class MediaComponent(ComponentBase):
     def __init__(self, name, t, media):
         super().__init__(name)
-        # We don't assume single observation per day
-        # - This `t` is not the same as other component `t` (can have duplicates)
         self._t = pm.MutableData("t", t) 
         self._media = pm.MutableData("media", media)
+
+# class ConstantMedia(ComponentBase):
